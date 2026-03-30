@@ -5,9 +5,7 @@ use std::{
 };
 use tar;
 
-const ABOUT: &'static str = r"
-    Implements some basic tar archive functionality but lacks convenient utilities like decompressing gzipped tarballs.
-";
+const ABOUT: &str = "A minimal tar implementation made in Rust for learning purposes.";
 
 /// Simple tar cli program
 #[derive(Parser, Debug)]
@@ -28,6 +26,14 @@ struct Args {
     /// Use archive file
     #[arg(short = 'f', long, required = false)]
     file: Option<String>,
+
+    /// Filter the archive through gzip. (Requires 'gzip' in '$PATH')
+    #[arg(short = 'z', long, action)]
+    gzip: bool,
+
+    /// More detailed output
+    #[arg(short = 'v', long, action)]
+    verbose: bool,
 
     /// files
     files: Vec<String>,
@@ -57,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if args.list {
         let archive = args.file.open();
-        tar::list_archive(archive)?;
+        tar::list_archive(archive, args.verbose)?;
     }
 
     Ok(())
