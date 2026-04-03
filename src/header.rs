@@ -407,6 +407,8 @@ impl TypeFlag {
 
 #[cfg(test)]
 pub mod tests {
+    use chrono::Datelike;
+
     use super::*;
 
     #[test]
@@ -459,5 +461,8 @@ pub mod tests {
         assert_eq!(Some("dire"), header.owner());
         assert_eq!(Some("dire"), header.group());
         assert_eq!("644", format!("{:o}", header.mode.mode()));
+        assert_eq!(2026, header.mtime.year());
+        assert_eq!(3, header.mtime.month());
+        assert_eq!(31, header.mtime.day());
     }
 }
