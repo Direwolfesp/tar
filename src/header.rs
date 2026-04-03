@@ -8,6 +8,7 @@ use std::{
 use crate::RECORD_SIZE;
 use chrono::{DateTime, TimeZone, Utc};
 use thiserror::Error;
+use utils::FieldRange;
 
 /// Generic tar header structure that tries to comply with both legacy and modern
 /// POSIX format record.
@@ -65,12 +66,34 @@ pub enum ParseError {
     ChecksumFailed,
 }
 
-mod util {
+mod utils {
+    /// Convert the ASCII bytes representing an octal number
+    /// into a valid integer, stripping necessary
+    /// NULL bytes at the end if necesary used in Tar fields.
+    ///
+    /// Returns `None` if the slice is all zeroes (field is unused)
+    /// or an error ocurred parsing the octal.
+    pub fn get_number<T: num_traits::Num>(bytes: &[u8]) -> Option<T> {
+        let bytes = rstrip(bytes)?;
+        let v = bytes_to_str(bytes);
+        T::from_str_radix(v, 8).ok()
+    }
+
+    /// Convert the bytes into a valid String, stripping necessary
+    /// NULL bytes at the end present in Tar fields
+    ///
+    /// Returns `None` if the slice is all zeroes (field is unused)
+    /// or has an invalid ASCII string.
+    pub fn get_string(bytes: &[u8]) -> Option<String> {
+        let bytes = rstrip(bytes)?;
+        let s = bytes_to_str(bytes);
+        Some(String::from(s))
+    }
+
     /// Helper to convert bytes into valid str slices.
     ///
     /// Panics.
-    ///
-    pub fn bytes_to_str(bytes: &[u8]) -> &str {
+    fn bytes_to_str(bytes: &[u8]) -> &str {
         str::from_utf8(bytes)
             .expect("TODO: Error handling from invalid ascii characters. (Or corrupted header)")
     }
@@ -84,7 +107,7 @@ mod util {
     /// ### Example:
     /// - `[10, 32, 82, 02, 00, 00, 00] => Some([10, 32, 82, 02])`
     /// - `[00, 00, 00, 00] => None`
-    pub fn rstrip(bytes: &[u8]) -> Option<&[u8]> {
+    fn rstrip(bytes: &[u8]) -> Option<&[u8]> {
         let stripped = bytes
             .split(|b| *b == 0)
             .next()
@@ -96,68 +119,97 @@ mod util {
             Some(stripped)
         }
     }
+
+    /// Helper enum to convert Tar header fields into valid
+    /// ranges inside a 512B header. Ex: `&raw_bytes[FieldRange::Path]`
+    pub enum FieldRange {
+        Path,
+        Mode,
+        Uid,
+        Gid,
+        FileSize,
+        Mtime,
+        Checksum,
+        Typeflag,
+        Linked,
+        Ustar,
+        Version,
+        Owner,
+        Group,
+        Major,
+        Minor,
+        FilenamePrefix,
+    }
+
+    impl std::ops::Index<FieldRange> for [u8] {
+        type Output = [u8];
+        fn index(&self, index: FieldRange) -> &Self::Output {
+            match index {
+                FieldRange::Path => &self[0..100],
+                FieldRange::Mode => &self[100..108],
+                FieldRange::Uid => &self[108..116],
+                FieldRange::Gid => &self[116..124],
+                FieldRange::FileSize => &self[124..136],
+                FieldRange::Mtime => &self[136..148],
+                FieldRange::Checksum => &self[148..156],
+                FieldRange::Typeflag => &self[156..157],
+                FieldRange::Linked => &self[157..257],
+                FieldRange::Ustar => &self[257..263],
+                FieldRange::Version => &self[263..265],
+                FieldRange::Owner => &self[265..297],
+                FieldRange::Group => &self[297..329],
+                FieldRange::Major => &self[329..337],
+                FieldRange::Minor => &self[337..345],
+                FieldRange::FilenamePrefix => &self[345..500],
+            }
+        }
+    }
 }
 
 impl Header {
     pub fn parse(bytes: &[u8; RECORD_SIZE]) -> Result<Self, ParseError> {
         // PATH
-        let path_bytes =
-            util::rstrip(&bytes[0..100]).ok_or(ParseError::MissingField("path".into()))?;
-        let path = PathBuf::from(util::bytes_to_str(path_bytes));
+        let path_string = utils::get_string(&bytes[FieldRange::Path])
+            .ok_or(ParseError::MissingField("path".into()))?;
+        let path = PathBuf::from(path_string);
 
         // MODE
-        let mode_bytes =
-            util::rstrip(&bytes[100..108]).ok_or(ParseError::MissingField("mode".into()))?;
-        let mode_str = util::bytes_to_str(mode_bytes);
-        let mode_raw = u32::from_str_radix(mode_str, 8).expect("failed to parse mode");
+        let mode_raw = utils::get_number(&bytes[FieldRange::Mode])
+            .ok_or(ParseError::MissingField("mode".into()))?;
         let mode = fs::Permissions::from_mode(mode_raw);
 
         // UID
-        let uid_bytes =
-            util::rstrip(&bytes[108..116]).ok_or(ParseError::MissingField("uid".into()))?;
-        let uid_str = util::bytes_to_str(uid_bytes);
-        let uid = u32::from_str_radix(uid_str, 8).expect("failed to parse uid");
+        let uid = utils::get_number(&bytes[FieldRange::Uid])
+            .ok_or(ParseError::MissingField("uid".into()))?;
 
         // GID
-        let gid_bytes =
-            util::rstrip(&bytes[116..124]).ok_or(ParseError::MissingField("gid".into()))?;
-        let gid_str = util::bytes_to_str(gid_bytes);
-        let gid = u32::from_str_radix(gid_str, 8).expect("failed to parse gid");
+        let gid = utils::get_number(&bytes[FieldRange::Gid])
+            .ok_or(ParseError::MissingField("gid".into()))?;
 
         // FILE SIZE
-        let file_size_bytes =
-            util::rstrip(&bytes[124..136]).ok_or(ParseError::MissingField("file size".into()))?;
-        let file_size_str = util::bytes_to_str(file_size_bytes);
-        let file_size = u64::from_str_radix(file_size_str, 8)?;
+        let file_size = utils::get_number(&bytes[FieldRange::FileSize])
+            .ok_or(ParseError::MissingField("file size".into()))?;
 
         // MTIME
-        let mtime_bytes =
-            util::rstrip(&bytes[136..148]).ok_or(ParseError::MissingField("mtime".into()))?;
-        let mtime_str = util::bytes_to_str(mtime_bytes);
-        let mtime_seconds = i64::from_str_radix(mtime_str, 8)?;
+        let mtime_seconds = utils::get_number(&bytes[FieldRange::Mtime])
+            .ok_or(ParseError::MissingField("mtime".into()))?;
         let mtime = Utc
             .timestamp_opt(mtime_seconds, 0)
             .single()
             .expect("Invalid mtime unix time");
 
         // CHECKSUM
-        let checksum_bytes =
-            util::rstrip(&bytes[148..156]).ok_or(ParseError::MissingField("checksum".into()))?;
-        let checksum_str = util::bytes_to_str(checksum_bytes);
-        let checksum = u64::from_str_radix(checksum_str, 8)?;
+        let checksum: u64 = utils::get_number(&bytes[FieldRange::Checksum])
+            .ok_or(ParseError::MissingField("checksum".into()))?;
 
         // TYPE FLAG
-        let flag_byte = &bytes[156..157];
+        let flag_byte = &bytes[FieldRange::Typeflag];
         let type_flag = TypeFlag::try_new(flag_byte[0])?;
 
-        // LINKED FILE (optional)
-        let linked_file = util::rstrip(&bytes[157..257]).and_then(|linked| {
-            let link_str = util::bytes_to_str(linked);
-            Some(String::from(link_str))
-        });
+        // LINKED FILE
+        let linked_file: Option<String> = utils::get_string(&bytes[FieldRange::Linked]);
 
         // POSIX HEADER (optional, common case)
-        let ustar_magic = &bytes[257..263];
         let posix_header = PosixHeader::from_record(bytes)?;
 
         let header = Header {
@@ -173,24 +225,68 @@ impl Header {
             posix_header,
         };
 
-        if header.verify_checksum() {
+        if header.verify_checksum(bytes) {
             Ok(header)
         } else {
             Err(ParseError::ChecksumFailed)
         }
     }
 
+    /// get file owner user name
+    pub fn owner(&self) -> Option<&str> {
+        if let Some(posix) = &self.posix_header {
+            posix.owner.as_deref()
+        } else {
+            return None;
+        }
+    }
+
+    /// get file owner group name
+    pub fn group(&self) -> Option<&str> {
+        if let Some(posix) = &self.posix_header {
+            posix.group.as_deref()
+        } else {
+            return None;
+        }
+    }
+
+    /// get file path
     pub fn filename(&self) -> &Path {
+        // TODO: handle symlinks maybe
         self.path.as_path()
     }
 
-    /// The checksum is calculated by taking the sum of the {un}signed byte
-    /// values of the header record with the eight checksum bytes taken to
-    /// be ASCII spaces (decimal value 32). It is stored as a six digit octal
-    /// number with leading zeroes followed by a NUL and then a space.
-    fn verify_checksum(&self) -> bool {
-        // TODO: verify checksum
-        true
+    /// get permissions mode
+    pub fn mode(&self) -> u32 {
+        self.mode.mode()
+    }
+
+    /// Returs a bool indicating if the checksum is valid.
+    ///
+    /// To compute the checksum:
+    /// - set the checksum field to all spaces,
+    /// - then sum all bytes in the header using unsigned arithmetic.
+    ///
+    /// Note that many early implementations of tar used signed arithmetic
+    /// for the checksum field, which can cause interoperability problems when
+    /// transferring archives between systems. Modern robust readers compute the
+    /// checksum both ways and accept the header if either computation matches.
+    fn verify_checksum(&self, raw_header: &[u8; RECORD_SIZE]) -> bool {
+        let mut raw_header: [u8; RECORD_SIZE] = *raw_header;
+        let checksum_bytes = &mut raw_header[148..156];
+        for b in checksum_bytes {
+            *b = b' ';
+        }
+
+        let checksum = self.checksum;
+        let sum_unsigned: u64 = raw_header.iter().map(|x| *x as u64).sum();
+        let sum_signed: i64 = raw_header.iter().map(|x| *x as i64).sum();
+
+        if checksum as i64 == sum_signed || checksum == sum_unsigned {
+            true
+        } else {
+            false
+        }
     }
 
     // TODO: more complete implementation with more context
@@ -222,47 +318,37 @@ struct PosixHeader {
 
 impl PosixHeader {
     pub fn from_record(bytes: &[u8; RECORD_SIZE]) -> Result<Option<Self>, ParseError> {
-        let ustar_magic = &bytes[257..263];
+        // Here I wont distinguish between POSIX ustar and
+        // GNU Tar, and just accept any extented header.
+        // Im just making it work with regular GNU tar utility.
+        let ustar_magic = &bytes[FieldRange::Ustar];
 
         if ustar_magic != b"ustar " && ustar_magic != b"ustar\0" {
             return Ok(None);
         }
 
-        // FIXME: is this a number or string???
-        // let version = &bytes[263..265];
-        let version: u16 = 0;
+        let version_str = &bytes[FieldRange::Version];
+        if version_str != b" \0" && version_str != b"00" {
+            return Err(ParseError::MissingField(String::from(
+                "ustar version missing",
+            )));
+        }
+        let version = 0;
 
-        // OWNER (optional)
-        let owner = util::rstrip(&bytes[265..297]).and_then(|user_bytes| {
-            let user_str = util::bytes_to_str(user_bytes);
-            Some(String::from(user_str))
-        });
+        // OWNER
+        let owner: Option<String> = utils::get_string(&bytes[FieldRange::Owner]);
 
-        // GROUP (optional)
-        let group = util::rstrip(&bytes[297..329]).and_then(|user_bytes| {
-            let user_str = util::bytes_to_str(user_bytes);
-            Some(String::from(user_str))
-        });
+        // GROUP
+        let group: Option<String> = utils::get_string(&bytes[FieldRange::Group]);
 
-        // MAJOR (optional)
-        let device_major = util::rstrip(&bytes[329..337]).and_then(|v| {
-            let v = util::bytes_to_str(v);
-            let version = u32::from_str_radix(v, 8).ok()?;
-            Some(version)
-        });
+        // MAJOR
+        let device_major: Option<u32> = utils::get_number(&bytes[FieldRange::Major]);
 
-        // MINOR (optional)
-        let device_minor = util::rstrip(&bytes[337..345]).and_then(|v| {
-            let v = util::bytes_to_str(v);
-            let version = u32::from_str_radix(v, 8).ok()?;
-            Some(version)
-        });
+        // MINOR
+        let device_minor: Option<u32> = utils::get_number(&bytes[FieldRange::Minor]);
 
-        // FILENAME PREFIX (optional)
-        let filename_prefix = util::rstrip(&bytes[345..500]).and_then(|p| {
-            let prefix = util::bytes_to_str(p);
-            Some(String::from(prefix))
-        });
+        // FILENAME PREFIX
+        let filename_prefix: Option<String> = utils::get_string(&bytes[FieldRange::FilenamePrefix]);
 
         Ok(Some(PosixHeader {
             version,
@@ -285,7 +371,6 @@ pub enum TypeFlag {
     BlockDev,
     Directory,
     Fifo,
-    ContiguousFile, // Same as normal file
     GlobalExtHeader,
     ExtHeader,
 }
@@ -304,14 +389,14 @@ impl TypeFlag {
     /// Returns an error for unhandled flags.
     pub fn try_new(byte: u8) -> Result<Self, TypeFlagError> {
         match byte {
-            b'\0' | b'0' => Ok(TypeFlag::NormalFile),
+            // treat contiguous file as regurar file
+            b'\0' | b'0' | b'7' => Ok(TypeFlag::NormalFile),
             b'1' => Ok(TypeFlag::HardLink),
             b'2' => Ok(TypeFlag::SymLink),
             b'3' => Ok(TypeFlag::CharDev),
             b'4' => Ok(TypeFlag::BlockDev),
             b'5' => Ok(TypeFlag::Directory),
             b'6' => Ok(TypeFlag::Fifo),
-            b'7' => Ok(TypeFlag::ContiguousFile),
             b'g' => Ok(TypeFlag::GlobalExtHeader),
             b'x' => Ok(TypeFlag::ExtHeader),
             b'A'..=b'Z' => Err(TypeFlagError::VendorExtension),
@@ -334,24 +419,24 @@ pub mod tests {
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x30, 0x31, 0x30, 0x30, 0x36, 0x34, 0x34, 0x00, 0x30, 0x30, 0x30, 0x31,
+            0x00, 0x00, 0x30, 0x30, 0x30, 0x30, 0x36, 0x34, 0x34, 0x00, 0x30, 0x30, 0x30, 0x31,
             0x37, 0x35, 0x30, 0x00, 0x30, 0x30, 0x30, 0x31, 0x37, 0x35, 0x30, 0x00, 0x30, 0x30,
-            0x30, 0x30, 0x30, 0x30, 0x30, 0x31, 0x32, 0x36, 0x37, 0x00, 0x31, 0x35, 0x31, 0x36,
-            0x32, 0x36, 0x31, 0x30, 0x36, 0x30, 0x34, 0x00, 0x30, 0x30, 0x31, 0x31, 0x32, 0x36,
-            0x37, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x30, 0x30, 0x30, 0x30, 0x30, 0x31, 0x36, 0x33, 0x36, 0x00, 0x31, 0x35, 0x31, 0x36,
+            0x32, 0x37, 0x37, 0x32, 0x36, 0x35, 0x35, 0x00, 0x30, 0x31, 0x31, 0x35, 0x35, 0x35,
+            0x00, 0x20, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x75, 0x73, 0x74, 0x61, 0x72, 0x20, 0x20, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x75, 0x73, 0x74, 0x61, 0x72, 0x20, 0x20, 0x00, 0x64,
+            0x69, 0x72, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x64, 0x69, 0x72, 0x65, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30,
-            0x00, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -367,12 +452,12 @@ pub mod tests {
         ];
 
         // Contains info for:
-        // -rw-r--r-- 1000/1000       695 2026-03-31 02:12 devlog.txt
-
+        // -rw-r--r-- dire/dire       926 2026-03-31 18:26 devlog.txt
         let header = Header::parse(&header_bytes).unwrap();
-        // TODO: keep testing and asserting
-        assert_eq!("devlog.txt", header.filename());
-
-        println!("{:?}", header);
+        assert_eq!("devlog.txt", header.path.to_string_lossy());
+        assert_eq!(926, header.file_size);
+        assert_eq!(Some("dire"), header.owner());
+        assert_eq!(Some("dire"), header.group());
+        assert_eq!("644", format!("{:o}", header.mode.mode()));
     }
 }
