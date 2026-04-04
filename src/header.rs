@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     fs,
     num::ParseIntError,
     os::unix::fs::PermissionsExt,
@@ -6,14 +7,14 @@ use std::{
 };
 
 use crate::RECORD_SIZE;
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, TimeZone, Utc};
 use thiserror::Error;
 use utils::FieldRange;
 
 /// Generic tar header structure that tries to comply with both legacy and modern
 /// POSIX format record.
 #[derive(Debug)]
-struct Header {
+pub struct Header {
     /// File path and name
     path: PathBuf,
 
@@ -113,7 +114,7 @@ mod utils {
             .next()
             .expect("TODO: handle split failure");
 
-        if stripped.len() == 0 {
+        if stripped.is_empty() {
             None
         } else {
             Some(stripped)
@@ -237,7 +238,7 @@ impl Header {
         if let Some(posix) = &self.posix_header {
             posix.owner.as_deref()
         } else {
-            return None;
+            None
         }
     }
 
@@ -246,19 +247,52 @@ impl Header {
         if let Some(posix) = &self.posix_header {
             posix.group.as_deref()
         } else {
-            return None;
+            None
         }
     }
 
     /// get file path
-    pub fn filename(&self) -> &Path {
-        // TODO: handle symlinks maybe
+    pub fn file_name(&self) -> &Path {
         self.path.as_path()
     }
 
-    /// get permissions mode
-    pub fn mode(&self) -> u32 {
-        self.mode.mode()
+    /// get file type
+    pub fn file_type(&self) -> TypeFlag {
+        self.type_flag
+    }
+
+    /// get file size in bytes
+    pub fn file_size(&self) -> u64 {
+        self.file_size
+    }
+
+    /// Formats the file mtime with the local timezone
+    pub fn modified(&self) -> String {
+        let local_time: DateTime<Local> = self.mtime.into();
+        local_time.to_string()
+    }
+
+    /// Formats the file permission bits with the classical
+    /// rwx representation
+    pub fn permissions(&self) -> String {
+        let mut mode_fmt = String::with_capacity(9);
+        let mode = self.mode.mode();
+
+        for i in (0..=8).rev() {
+            let bit = 1 << i;
+            if mode & bit != 0 {
+                mode_fmt.push(match i % 3 {
+                    2 => 'r',
+                    1 => 'w',
+                    0 => 'x',
+                    _ => unreachable!(),
+                });
+            } else {
+                mode_fmt.push('-');
+            }
+        }
+
+        mode_fmt
     }
 
     /// Returs a bool indicating if the checksum is valid.
@@ -282,16 +316,7 @@ impl Header {
         let sum_unsigned: u64 = raw_header.iter().map(|x| *x as u64).sum();
         let sum_signed: i64 = raw_header.iter().map(|x| *x as i64).sum();
 
-        if checksum as i64 == sum_signed || checksum == sum_unsigned {
-            true
-        } else {
-            false
-        }
-    }
-
-    // TODO: more complete implementation with more context
-    fn print_meta(&self, verbose: bool) {
-        println!("{}", self.filename().display())
+        checksum as i64 == sum_signed || checksum == sum_unsigned
     }
 }
 
@@ -362,7 +387,7 @@ impl PosixHeader {
 }
 
 /// Its also compatible with the old pre-posix file flag
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum TypeFlag {
     NormalFile,
     HardLink,
@@ -373,6 +398,21 @@ pub enum TypeFlag {
     Fifo,
     GlobalExtHeader,
     ExtHeader,
+}
+
+impl From<TypeFlag> for String {
+    fn from(val: TypeFlag) -> Self {
+        match val {
+            TypeFlag::HardLink | TypeFlag::NormalFile => "file".into(),
+            TypeFlag::SymLink => "symlink".into(),
+            TypeFlag::CharDev => "char device".into(),
+            TypeFlag::BlockDev => "block device".into(),
+            TypeFlag::Directory => "dir".into(),
+            TypeFlag::Fifo => "fifo".into(),
+            TypeFlag::GlobalExtHeader => unimplemented!(),
+            TypeFlag::ExtHeader => unimplemented!(),
+        }
+    }
 }
 
 #[derive(Error, Debug)]
@@ -407,9 +447,8 @@ impl TypeFlag {
 
 #[cfg(test)]
 pub mod tests {
-    use chrono::Datelike;
-
     use super::*;
+    use chrono::Datelike;
 
     #[test]
     fn parse_header() {
