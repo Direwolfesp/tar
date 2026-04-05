@@ -251,9 +251,19 @@ impl Header {
         }
     }
 
-    /// get file path
-    pub fn file_name(&self) -> &Path {
-        self.path.as_path()
+    /// get file path formated as string
+    pub fn file_name(&self) -> String {
+        let path = self.path.as_path().display().to_string();
+        match self.type_flag {
+            TypeFlag::SymLink => {
+                let target = self
+                    .linked_file
+                    .as_ref()
+                    .expect("must be present for symlinks");
+                format!("{} -> {}", path, target)
+            }
+            _ => path,
+        }
     }
 
     /// get file type
@@ -269,7 +279,7 @@ impl Header {
     /// Formats the file mtime with the local timezone
     pub fn modified(&self) -> String {
         let local_time: DateTime<Local> = self.mtime.into();
-        local_time.to_string()
+        local_time.format("%d/%m/%Y %H:%M").to_string()
     }
 
     /// Formats the file permission bits with the classical

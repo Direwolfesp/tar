@@ -77,7 +77,7 @@ impl Archiver {
         for (index, file) in self.files.iter().map(|fi| &fi.header).enumerate() {
             build.push_record([
                 format!("{index}"),
-                file.file_name().display().to_string(),
+                file.file_name(),
                 file.file_type().into(),
                 format!("{} B", file.file_size()),
                 file.permissions(),
