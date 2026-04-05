@@ -5,6 +5,7 @@ use std::{
 };
 
 use tabled::{
+    Table,
     builder::Builder,
     settings::{
         Alignment, Color, Style,
@@ -68,9 +69,21 @@ impl Archiver {
         Self { files, source }
     }
 
-    /// Pretty print all files contained in the archive in the form of
+    /// Pretty print all files contained in the archive in form of
     /// table.
-    pub fn print_files(&self) {
+    pub fn print_files(&self, verbose: bool) {
+        if !verbose {
+            let mut data = vec![vec![String::from("#"), String::from("name")]];
+            for (i, f) in self.files.iter().map(|fi| &fi.header).enumerate() {
+                data.push(vec![format!("{i}"), f.file_name()]);
+            }
+            let mut table = Table::from_iter(data);
+            table.with(Style::rounded());
+            table.with(Color::FG_GREEN);
+            println!("{table}");
+            return;
+        }
+
         let mut build = Builder::default();
         build.push_record(["#", "name", "type", "size", "mode", "modified"]);
 
@@ -113,6 +126,6 @@ mod tests {
             "/home/dire/Documents/Coding/github/tar/other.tar",
         ));
 
-        tar.print_files();
+        tar.print_files(true);
     }
 }

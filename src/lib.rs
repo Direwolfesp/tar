@@ -27,31 +27,41 @@
 //! - The information is encoded in ASCII.
 //! - When a field is unused is filled with NULL bytes.
 //! - Numeric fields are octal using ASCII digits with leading zeroes.
-//! -
-//!
 //!
 #![allow(dead_code, unused_variables, unused_mut)]
 
-pub mod archiver;
-pub mod builder;
-pub mod header;
+mod archiver;
+mod builder;
+mod header;
+
+use std::{
+    error,
+    path::{Path, PathBuf},
+};
+
+// re-export names
+pub use archiver::Archiver;
+pub use header::Header;
 
 const RECORD_SIZE: usize = 512;
 
-pub fn list_archive(
-    file: &std::path::Path,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub fn list_archive(file: &Path, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+    if !file.exists() {
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("Cannot open archive '{}'", file.to_string_lossy()),
+        )))
+    } else {
+        let tar = Archiver::parse(file);
+        tar.print_files(verbose);
+        Ok(())
+    }
+}
+
+pub fn extract_archive(path: &Path, verbose: bool) -> Result<(), Box<dyn error::Error>> {
     todo!()
 }
 
-pub fn extract_archive(
-    path: &std::path::Path,
-    verbose: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    todo!()
-}
-
-pub fn create_archive(files: &[std::path::PathBuf]) -> Result<(), Box<dyn std::error::Error>> {
+pub fn create_archive(files: &[PathBuf]) -> Result<(), Box<dyn error::Error>> {
     todo!()
 }

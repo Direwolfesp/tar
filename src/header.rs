@@ -1,10 +1,4 @@
-use std::{
-    fmt::Debug,
-    fs,
-    num::ParseIntError,
-    os::unix::fs::PermissionsExt,
-    path::{Path, PathBuf},
-};
+use std::{fmt::Debug, fs, num::ParseIntError, os::unix::fs::PermissionsExt, path::PathBuf};
 
 use crate::RECORD_SIZE;
 use chrono::{DateTime, Local, TimeZone, Utc};
