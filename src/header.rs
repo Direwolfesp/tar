@@ -451,7 +451,6 @@ pub enum TypeFlagError {
     #[error("Unknown type flag '{0}'. Could mean an error or a perhaps a newly standarized flag")]
     UnrecognizedType(u8),
 
-    ///
     #[error("Unimplemented vendor extension '{0}'")]
     VendorExtension(u8),
 }

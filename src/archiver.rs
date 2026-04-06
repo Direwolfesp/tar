@@ -103,11 +103,7 @@ impl Archiver {
 
         for file in &self.files {
             self.extract_object(file, dest)?;
-            eprintln!(
-                "Extracted {}/{}",
-                dest.display(),
-                file.header.path().display()
-            );
+            eprintln!("Extracted {}", file.header.path().display());
         }
 
         Ok(())
