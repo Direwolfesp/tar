@@ -51,7 +51,7 @@ pub enum ParseError {
     #[error("Failed to parse octal ascii number: {0}")]
     InvalidNumber(#[from] ParseIntError),
 
-    #[error("File object contains and invalid type flag")]
+    #[error("File object contains and invalid type flag: {0}")]
     BadFileTypeFlag(#[from] TypeFlagError),
 
     #[error("Missing primary field: {0}")]
@@ -448,11 +448,12 @@ impl From<TypeFlag> for String {
 
 #[derive(Error, Debug)]
 pub enum TypeFlagError {
-    #[error("Unknown type flag. This could mean an error or a perhaps a newly standarized flag")]
-    UnrecognizedType,
+    #[error("Unknown type flag '{0}'. Could mean an error or a perhaps a newly standarized flag")]
+    UnrecognizedType(u8),
 
-    #[error("Unimplemented vendor extension found")]
-    VendorExtension,
+    ///
+    #[error("Unimplemented vendor extension '{0}'")]
+    VendorExtension(u8),
 }
 
 impl TypeFlag {
@@ -470,8 +471,8 @@ impl TypeFlag {
             b'6' => Ok(TypeFlag::Fifo),
             b'g' => Ok(TypeFlag::GlobalExtHeader),
             b'x' => Ok(TypeFlag::ExtHeader),
-            b'A'..=b'Z' => Err(TypeFlagError::VendorExtension),
-            _ => Err(TypeFlagError::UnrecognizedType),
+            b'A'..=b'Z' => Err(TypeFlagError::VendorExtension(byte)),
+            _ => Err(TypeFlagError::UnrecognizedType(byte)),
         }
     }
 }

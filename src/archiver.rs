@@ -1,7 +1,7 @@
 use std::{
     fs::File,
     io::{Read, Seek},
-    os::unix,
+    os::unix::{self},
     path::{Path, PathBuf},
 };
 
@@ -46,8 +46,10 @@ impl Archiver {
             file.read_exact(&mut record_buf)
                 .expect("Malformed tar archive");
 
-            let Ok(header) = Header::parse(&record_buf) else {
-                // TODO: error handling
+            let Ok(header) = Header::parse(&record_buf).map_err(|e| {
+                let typeflag = &record_buf[156..157];
+                eprintln!("Parsing header error: {}", e);
+            }) else {
                 break;
             };
 
