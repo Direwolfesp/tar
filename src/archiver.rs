@@ -1,8 +1,9 @@
 use std::{
-    fs::File,
+    fs::{self, File},
     io::{Read, Seek},
     os::unix::{self},
     path::{Path, PathBuf},
+    time::SystemTime,
 };
 
 use tabled::{
@@ -57,7 +58,7 @@ impl Archiver {
             let offset = file.stream_position().unwrap();
 
             // skip file content
-            file.seek_relative(header.file_size() as i64)
+            file.seek_relative(header.file_size as i64)
                 .expect("seek failed");
 
             let pos = file.stream_position().unwrap();
@@ -102,51 +103,64 @@ impl Archiver {
         }
 
         for file in &self.files {
-            self.extract_object(file, dest)?;
+            self.extract_object(file)?;
             eprintln!("Extracted {}", file.header.path().display());
         }
 
         Ok(())
     }
 
-    /// Extracts the given objecto to its corresponding file or directory.
+    /// Extracts the given object to its corresponding file or directory.
+    ///
+    /// The destination dir is relative to cwd,
+    /// for further control use ```extract_to_dir``` function.
     ///
     /// Is responsible for copying the contents from the archive and ensuring that
     /// the created file has the correct metadata.
-    fn extract_object(&self, obj: &FileInfo, dest: &Path) -> Result<(), std::io::Error> {
-        match obj.header.file_type() {
+    fn extract_object(&self, obj: &FileInfo) -> Result<(), std::io::Error> {
+        match obj.header.type_flag {
             TypeFlag::NormalFile => {
-                io::copy_file_range(
-                    self.archive.as_path(),
-                    obj.offset,
-                    obj.header.file_size(),
-                    obj.header.path().as_path(),
-                    0,
-                )?;
+                let src = self.archive.as_path();
+                let dest = obj.header.path();
+                io::copy_file_range(src, obj.offset, obj.header.file_size, dest.as_path(), 0)?;
             }
             TypeFlag::HardLink => {
-                let original = obj.header.path();
-
-                if original.exists() {
-                    let link: &str = obj
+                let link = obj.header.path();
+                if link.exists() {
+                    let original: &str = obj
                         .header
-                        .linked_file()
+                        .linked_file
+                        .as_deref()
                         .expect("must be present for hardlinks");
-                    std::fs::hard_link(link, original)?;
+                    std::fs::hard_link(original, link)?;
                 }
             }
             TypeFlag::SymLink => {
-                let target: &str = obj
+                let link = obj.header.path();
+                let original: &str = obj
                     .header
-                    .linked_file()
+                    .linked_file
+                    .as_deref()
                     .expect("must be present for symlinks");
-                unix::fs::symlink(target, obj.header.path())?;
+                unix::fs::symlink(original, link)?;
             }
             TypeFlag::Directory => {
-                std::fs::create_dir_all(obj.header.path())?;
+                let dir = obj.header.path();
+                std::fs::create_dir_all(dir)?;
             }
             _ => todo!("extract rest of file types"),
         }
+
+        // Update new file/dir/symlink metadata
+        let dest = obj.header.path();
+
+        update_metadata(
+            dest.as_path(),
+            obj.header.mtime.into(),
+            obj.header.mode.clone(), // cheap
+            obj.header.uid,
+            obj.header.gid,
+        )?;
 
         Ok(())
     }
@@ -173,10 +187,10 @@ impl Archiver {
             build.push_record([
                 format!("{index}"),
                 file.display_name(),
-                file.file_type().into(),
-                format!("{} B", file.file_size()),
-                file.permissions(),
-                file.modified(),
+                file.type_flag.into(),
+                format!("{} B", file.file_size),
+                file.display_permissions(),
+                file.display_modified(),
             ]);
         }
 
@@ -195,6 +209,27 @@ impl Archiver {
 
         println!("{table}");
     }
+}
+
+/// Updates the metadata for the given file
+fn update_metadata(
+    path: &Path,
+    modified: SystemTime,
+    mode: fs::Permissions,
+    uid: u32,
+    gid: u32,
+) -> Result<(), std::io::Error> {
+    let f = File::open(path)?;
+
+    if path.is_symlink() {
+        unix::fs::lchown(path, Some(uid), Some(gid))?;
+    } else {
+        unix::fs::chown(path, Some(uid), Some(gid))?;
+    }
+
+    f.set_permissions(mode)?;
+    f.set_modified(modified)?;
+    Ok(())
 }
 
 #[cfg(test)]

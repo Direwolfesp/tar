@@ -10,28 +10,28 @@ use utils::FieldRange;
 #[derive(Debug)]
 pub struct Header {
     /// File path and name
-    path: PathBuf,
+    pub path: PathBuf,
 
     /// File mode (octal)
-    mode: fs::Permissions,
+    pub mode: fs::Permissions,
 
     /// Owner's numeric user ID (octal)
-    uid: u32,
+    pub uid: u32,
 
     /// Group's numeric user ID (octal)
-    gid: u32,
+    pub gid: u32,
 
     /// File size in bytes (octal)
-    file_size: u64,
+    pub file_size: u64,
 
     /// Last modification time in numeric Unix time format (octal)
-    mtime: DateTime<Utc>,
+    pub mtime: DateTime<Utc>,
 
     /// Checksum for header record
     checksum: u64,
 
     /// File type
-    type_flag: TypeFlag,
+    pub type_flag: TypeFlag,
 
     /// Name of linked file.
     ///
@@ -39,7 +39,7 @@ pub struct Header {
     /// archived as a normal file; the rest are archived as hard links, with the
     /// "name of linked file" field set to the first one's name. On extraction,
     /// such hard links should be recreated in the file system.
-    linked_file: Option<String>,
+    pub linked_file: Option<String>,
 
     /// Only present for post 1988 POSIX IEEE standard archives. Which is almost the case
     /// nowadays. Must check for the presence of "ustar\0" at offset 257
@@ -254,10 +254,6 @@ impl Header {
         }
     }
 
-    pub fn linked_file(&self) -> Option<&str> {
-        self.linked_file.as_ref().map(|x| x.as_str())
-    }
-
     /// Constructs the path name of the file, taking into account
     /// for extra prefixex that might be present if the filename is too large
     pub fn path(&self) -> PathBuf {
@@ -287,25 +283,15 @@ impl Header {
         }
     }
 
-    /// get file type
-    pub fn file_type(&self) -> TypeFlag {
-        self.type_flag
-    }
-
-    /// get file size in bytes
-    pub fn file_size(&self) -> u64 {
-        self.file_size
-    }
-
     /// Formats the file mtime with the local timezone
-    pub fn modified(&self) -> String {
+    pub fn display_modified(&self) -> String {
         let local_time: DateTime<Local> = self.mtime.into();
         local_time.format("%d/%m/%Y %H:%M").to_string()
     }
 
     /// Formats the file permission bits with the classical
     /// rwx representation
-    pub fn permissions(&self) -> String {
+    pub fn display_permissions(&self) -> String {
         let mut mode_fmt = String::with_capacity(9);
         let mode = self.mode.mode();
 

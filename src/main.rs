@@ -1,26 +1,31 @@
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueHint};
 
 const ABOUT: &str = "A minimal tar implementation made in Rust for learning purposes.";
 
 #[derive(Subcommand)]
 enum Command {
     /// Extract an archive file
+    #[clap(visible_alias = "e")]
     Extract {
         /// Output directory.
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value = ".", value_hint = ValueHint::DirPath)]
         output: PathBuf,
 
         /// Archive to extract
         archive: PathBuf,
     },
+
     /// Lists files of an archive
+    #[clap(visible_aliases = ["l", "ls"])]
     List {
         /// Use archive file
         archive: PathBuf,
     },
+
     /// Creates a new tar archive
+    #[clap(visible_alias = "c")]
     Create {
         /// Name of the archive
         name: PathBuf,
