@@ -10,17 +10,13 @@ enum Command {
     Extract {
         /// Output directory.
         #[arg(short, long, default_value = ".")]
-        output: Option<PathBuf>,
+        output: PathBuf,
 
         /// Archive to extract
         archive: PathBuf,
     },
     /// Lists files of an archive
     List {
-        /// Verbose output
-        #[arg(short, long)]
-        verbose: bool,
-
         /// Use archive file
         archive: PathBuf,
     },
@@ -41,18 +37,19 @@ struct Args {
     /// Action to perform
     #[command(subcommand)]
     action: Command,
+
+    /// Verbose output
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     match args.action {
-        Command::List { archive, verbose } => tar::list_archive(archive.as_path(), verbose)?,
-        Command::Extract {
-            archive: _,
-            output: _,
-        } => {
-            todo!("implement extracting")
+        Command::List { archive } => tar::list_archive(archive.as_path(), args.verbose)?,
+        Command::Extract { archive, output } => {
+            tar::extract_archive(archive.as_path(), output.as_path(), args.verbose)?
         }
         Command::Create { files: _, name: _ } => {
             todo!("implemnent creating archive")

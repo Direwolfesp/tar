@@ -33,11 +33,9 @@
 mod archiver;
 mod builder;
 mod header;
+mod io;
 
-use std::{
-    error,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 // re-export names
 pub use archiver::Archiver;
@@ -45,12 +43,12 @@ pub use header::Header;
 
 const RECORD_SIZE: usize = 512;
 
-pub fn list_archive(file: &Path, verbose: bool) -> Result<(), Box<dyn std::error::Error>> {
+pub fn list_archive(file: &Path, verbose: bool) -> Result<(), std::io::Error> {
     if !file.exists() {
-        Err(Box::new(std::io::Error::new(
+        Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("Cannot open archive '{}'", file.to_string_lossy()),
-        )))
+        ))
     } else {
         let tar = Archiver::parse(file);
         tar.print_files(verbose);
@@ -58,10 +56,15 @@ pub fn list_archive(file: &Path, verbose: bool) -> Result<(), Box<dyn std::error
     }
 }
 
-pub fn extract_archive(path: &Path, verbose: bool) -> Result<(), Box<dyn error::Error>> {
-    todo!()
+pub fn extract_archive(file: &Path, dest: &Path, verbose: bool) -> Result<(), std::io::Error> {
+    let mut tar = Archiver::parse(file);
+    tar.extract_to_dir(dest)?;
+    if verbose {
+        eprintln!("Extracted contents to {}", dest.display());
+    }
+    Ok(())
 }
 
-pub fn create_archive(files: &[PathBuf]) -> Result<(), Box<dyn error::Error>> {
+pub fn create_archive(files: &[PathBuf]) -> Result<(), std::io::Error> {
     todo!()
 }

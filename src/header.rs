@@ -245,8 +245,35 @@ impl Header {
         }
     }
 
+    /// If present, this must be prepended before the regular path name
+    fn prefix(&self) -> Option<&str> {
+        if let Some(posix) = &self.posix_header {
+            posix.filename_prefix.as_deref()
+        } else {
+            None
+        }
+    }
+
+    pub fn linked_file(&self) -> Option<&str> {
+        self.linked_file.as_ref().map(|x| x.as_str())
+    }
+
+    /// Constructs the path name of the file, taking into account
+    /// for extra prefixex that might be present if the filename is too large
+    pub fn path(&self) -> PathBuf {
+        let mut path = PathBuf::new();
+
+        if let Some(prefix) = self.prefix() {
+            path.push(prefix);
+        }
+
+        path.push(&self.path);
+
+        path
+    }
+
     /// get file path formated as string
-    pub fn file_name(&self) -> String {
+    pub fn display_name(&self) -> String {
         let path = self.path.as_path().display().to_string();
         match self.type_flag {
             TypeFlag::SymLink => {
