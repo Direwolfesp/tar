@@ -28,12 +28,11 @@
 //! - When a field is unused is filled with NULL bytes.
 //! - Numeric fields are octal using ASCII digits with leading zeroes.
 //!
-#![allow(dead_code, unused_variables, unused_mut)]
 
 mod archiver;
 mod builder;
 mod header;
-mod io;
+mod utils;
 
 use std::path::{Path, PathBuf};
 

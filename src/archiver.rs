@@ -17,8 +17,8 @@ use tabled::{
 
 use crate::{
     RECORD_SIZE,
-    header::{Header, TypeFlag},
-    io,
+    header::{Header, ParseError, TypeFlag},
+    utils::{self, io},
 };
 
 struct FileInfo {
@@ -40,39 +40,43 @@ impl Archiver {
     pub fn parse(filename: &Path) -> Self {
         let mut file = File::open(filename).expect("cannot open archive file");
         let mut files: Vec<FileInfo> = Vec::new();
+        let mut long_path: Option<String> = None; // will handle 'L' extension
 
         loop {
             let mut record_buf: [u8; RECORD_SIZE] = [0; RECORD_SIZE];
-
             file.read_exact(&mut record_buf)
                 .expect("Malformed tar archive");
 
-            let Ok(header) = Header::parse(&record_buf).map_err(|e| {
-                let typeflag = &record_buf[156..157];
-                eprintln!("Parsing header error: {}", e);
-            }) else {
-                break;
+            let header = match Header::parse(&record_buf, long_path) {
+                Ok(header) => header,
+                Err(ParseError::EmptyHeader) => break,
+                Err(e) => panic!("{}", e),
             };
 
+            if header.type_flag == TypeFlag::LongPathName {
+                let long = extract_long_path(&header, &mut file).unwrap_or_default();
+                long_path = Some(long);
+                continue;
+            } else {
+                // Unmark it so it doesnt
+                long_path = None;
+            }
+
             // save old offset
-            let offset = file.stream_position().unwrap();
+            let data_start = file.stream_position().unwrap();
+            assert!(data_start.is_multiple_of(RECORD_SIZE as u64));
 
             // skip file content
             file.seek_relative(header.file_size as i64)
                 .expect("seek failed");
 
-            let pos = file.stream_position().unwrap();
-            let rem = pos as usize % RECORD_SIZE;
+            // necessary as file contents might end at any point
+            io::align_forward(&mut file);
 
-            // only align forward if we are not in a position divisible by
-            // RECORD_SIZE
-            if rem != 0 {
-                let align_forward = RECORD_SIZE - rem;
-                file.seek_relative(align_forward as i64)
-                    .expect("align forward failed");
-            }
-
-            files.push(FileInfo { header, offset });
+            files.push(FileInfo {
+                header,
+                offset: data_start,
+            });
         }
 
         Self {
@@ -95,7 +99,7 @@ impl Archiver {
         // new dir. Its a bit ugly tho.
         if dest != "." {
             let mut comps = vec![];
-            for c in dest.components() {
+            for _ in dest.components() {
                 comps.push(String::from(".."));
             }
             comps.push(self.archive.to_string_lossy().to_string());
@@ -232,6 +236,32 @@ fn update_metadata(
     Ok(())
 }
 
+/// Takes care of parsing the long path name described in
+/// the 'L' extension of the file flag
+///
+/// more info: `https://stackoverflow.com/questions/2078778/what-exactly-is-the-gnu-tar-longlink-trick`
+fn extract_long_path(header: &Header, file: &mut File) -> Result<String, std::io::Error> {
+    let (long_link, long_path_len) = (&header.path, header.file_size);
+
+    // GNU tar convention is to mark the name with this
+    assert!(long_link == "././@LongLink");
+
+    // read the extended file name
+    let mut extended_path: Vec<u8> = vec![0; long_path_len as usize];
+    file.read_exact(&mut extended_path)?;
+
+    // align to block boundary and parse the next header
+    io::align_forward(file);
+
+    // mark the path so it can be used for the next file object
+    utils::get_string(&extended_path).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Long file name is not a valid string",
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::archiver::Archiver;
@@ -244,6 +274,6 @@ mod tests {
         ));
 
         // TODO: pass this test
-        assert_eq!(tar.files.len(), 20931);
+        assert_eq!(tar.files.len(), 20932);
     }
 }

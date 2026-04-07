@@ -1,9 +1,9 @@
 use std::{fmt::Debug, fs, num::ParseIntError, os::unix::fs::PermissionsExt, path::PathBuf};
 
-use crate::RECORD_SIZE;
+use crate::{RECORD_SIZE, utils};
+
 use chrono::{DateTime, Local, TimeZone, Utc};
 use thiserror::Error;
-use utils::FieldRange;
 
 /// Generic tar header structure that tries to comply with both legacy and modern
 /// POSIX format record.
@@ -59,114 +59,29 @@ pub enum ParseError {
 
     #[error("Failed to verify header, is the file corrupted?")]
     ChecksumFailed,
-}
 
-mod utils {
-    /// Convert the ASCII bytes representing an octal number
-    /// into a valid integer, stripping necessary
-    /// NULL bytes at the end if necesary used in Tar fields.
-    ///
-    /// Returns `None` if the slice is all zeroes (field is unused)
-    /// or an error ocurred parsing the octal.
-    pub fn get_number<T: num_traits::Num>(bytes: &[u8]) -> Option<T> {
-        let bytes = rstrip(bytes)?;
-        let v = bytes_to_str(bytes);
-        T::from_str_radix(v, 8).ok()
-    }
-
-    /// Convert the bytes into a valid String, stripping necessary
-    /// NULL bytes at the end present in Tar fields
-    ///
-    /// Returns `None` if the slice is all zeroes (field is unused)
-    /// or has an invalid ASCII string.
-    pub fn get_string(bytes: &[u8]) -> Option<String> {
-        let bytes = rstrip(bytes)?;
-        let s = bytes_to_str(bytes);
-        Some(String::from(s))
-    }
-
-    /// Helper to convert bytes into valid str slices.
-    ///
-    /// Panics.
-    fn bytes_to_str(bytes: &[u8]) -> &str {
-        str::from_utf8(bytes)
-            .expect("TODO: Error handling from invalid ascii characters. (Or corrupted header)")
-    }
-
-    /// Helper that removes all rightmost NULL bytes
-    /// from the slice. Returs `None` if the resulting
-    /// slice is of size 0, which means the field is unnused
-    ///
-    /// Panics
-    ///
-    /// ### Example:
-    /// - `[10, 32, 82, 02, 00, 00, 00] => Some([10, 32, 82, 02])`
-    /// - `[00, 00, 00, 00] => None`
-    fn rstrip(bytes: &[u8]) -> Option<&[u8]> {
-        let stripped = bytes
-            .split(|b| *b == 0)
-            .next()
-            .expect("TODO: handle split failure");
-
-        if stripped.is_empty() {
-            None
-        } else {
-            Some(stripped)
-        }
-    }
-
-    /// Helper enum to convert Tar header fields into valid
-    /// ranges inside a 512B header. Ex: `&raw_bytes[FieldRange::Path]`
-    pub enum FieldRange {
-        Path,
-        Mode,
-        Uid,
-        Gid,
-        FileSize,
-        Mtime,
-        Checksum,
-        Typeflag,
-        Linked,
-        Ustar,
-        Version,
-        Owner,
-        Group,
-        Major,
-        Minor,
-        FilenamePrefix,
-    }
-
-    impl std::ops::Index<FieldRange> for [u8] {
-        type Output = [u8];
-        fn index(&self, index: FieldRange) -> &Self::Output {
-            match index {
-                FieldRange::Path => &self[0..100],
-                FieldRange::Mode => &self[100..108],
-                FieldRange::Uid => &self[108..116],
-                FieldRange::Gid => &self[116..124],
-                FieldRange::FileSize => &self[124..136],
-                FieldRange::Mtime => &self[136..148],
-                FieldRange::Checksum => &self[148..156],
-                FieldRange::Typeflag => &self[156..157],
-                FieldRange::Linked => &self[157..257],
-                FieldRange::Ustar => &self[257..263],
-                FieldRange::Version => &self[263..265],
-                FieldRange::Owner => &self[265..297],
-                FieldRange::Group => &self[297..329],
-                FieldRange::Major => &self[329..337],
-                FieldRange::Minor => &self[337..345],
-                FieldRange::FilenamePrefix => &self[345..500],
-            }
-        }
-    }
+    #[error("Header is empty, usually means EOF")]
+    EmptyHeader,
 }
 
 impl Header {
-    pub fn parse(bytes: &[u8; RECORD_SIZE]) -> Result<Self, ParseError> {
+    pub fn parse(bytes: &[u8; RECORD_SIZE], long_path: Option<String>) -> Result<Self, ParseError> {
+        if bytes.iter().all(|&b| b == 0) {
+            return Err(ParseError::EmptyHeader);
+        }
+
         // PATH
         let path_string = utils::get_string(&bytes[FieldRange::Path])
             .ok_or(ParseError::MissingField("path".into()))?;
-        let path = PathBuf::from(path_string);
+        let mut path = PathBuf::from(path_string);
+
+        // If long path is present (L extension), we must
+        // use this new long path instead of the old one, as
+        // it will be truncated to the first 100 characters
+        if let Some(long_path) = long_path {
+            path.clear();
+            path.push(long_path.trim_ascii());
+        }
 
         // MODE
         let mode_raw = utils::get_number(&bytes[FieldRange::Mode])
@@ -270,7 +185,7 @@ impl Header {
 
     /// get file path formated as string
     pub fn display_name(&self) -> String {
-        let path = self.path.as_path().display().to_string();
+        let path = self.path().as_path().display().to_string();
         match self.type_flag {
             TypeFlag::SymLink => {
                 let target = self
@@ -337,6 +252,7 @@ impl Header {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 struct PosixHeader {
     /// Ustar version, "00"
@@ -403,6 +319,51 @@ impl PosixHeader {
     }
 }
 
+/// Helper enum to convert Tar header fields into valid
+/// ranges inside a 512B header. Ex: `&raw_bytes[FieldRange::Path]`
+pub enum FieldRange {
+    Path,
+    Mode,
+    Uid,
+    Gid,
+    FileSize,
+    Mtime,
+    Checksum,
+    Typeflag,
+    Linked,
+    Ustar,
+    Version,
+    Owner,
+    Group,
+    Major,
+    Minor,
+    FilenamePrefix,
+}
+
+impl std::ops::Index<FieldRange> for [u8] {
+    type Output = [u8];
+    fn index(&self, index: FieldRange) -> &Self::Output {
+        match index {
+            FieldRange::Path => &self[0..100],
+            FieldRange::Mode => &self[100..108],
+            FieldRange::Uid => &self[108..116],
+            FieldRange::Gid => &self[116..124],
+            FieldRange::FileSize => &self[124..136],
+            FieldRange::Mtime => &self[136..148],
+            FieldRange::Checksum => &self[148..156],
+            FieldRange::Typeflag => &self[156..157],
+            FieldRange::Linked => &self[157..257],
+            FieldRange::Ustar => &self[257..263],
+            FieldRange::Version => &self[263..265],
+            FieldRange::Owner => &self[265..297],
+            FieldRange::Group => &self[297..329],
+            FieldRange::Major => &self[329..337],
+            FieldRange::Minor => &self[337..345],
+            FieldRange::FilenamePrefix => &self[345..500],
+        }
+    }
+}
+
 /// Its also compatible with the old pre-posix file flag
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum TypeFlag {
@@ -415,6 +376,7 @@ pub enum TypeFlag {
     Fifo,
     GlobalExtHeader,
     ExtHeader,
+    LongPathName,
 }
 
 impl From<TypeFlag> for String {
@@ -426,6 +388,7 @@ impl From<TypeFlag> for String {
             TypeFlag::BlockDev => "block device".into(),
             TypeFlag::Directory => "dir".into(),
             TypeFlag::Fifo => "fifo".into(),
+            TypeFlag::LongPathName => "???".into(),
             TypeFlag::GlobalExtHeader => unimplemented!(),
             TypeFlag::ExtHeader => unimplemented!(),
         }
@@ -456,6 +419,7 @@ impl TypeFlag {
             b'6' => Ok(TypeFlag::Fifo),
             b'g' => Ok(TypeFlag::GlobalExtHeader),
             b'x' => Ok(TypeFlag::ExtHeader),
+            b'L' => Ok(TypeFlag::LongPathName),
             b'A'..=b'Z' => Err(TypeFlagError::VendorExtension(byte)),
             _ => Err(TypeFlagError::UnrecognizedType(byte)),
         }
@@ -511,7 +475,7 @@ pub mod tests {
 
         // Contains info for:
         // -rw-r--r-- dire/dire       926 2026-03-31 18:26 devlog.txt
-        let header = Header::parse(&header_bytes).unwrap();
+        let header = Header::parse(&header_bytes, None).unwrap();
         assert_eq!("devlog.txt", header.path.to_string_lossy());
         assert_eq!(926, header.file_size);
         assert_eq!(Some("dire"), header.owner());
