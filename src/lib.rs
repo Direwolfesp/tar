@@ -34,6 +34,7 @@ mod builder;
 mod header;
 mod utils;
 
+use log::info;
 use std::path::{Path, PathBuf};
 
 // re-export names
@@ -57,13 +58,14 @@ pub fn list_archive(file: &Path, verbose: bool) -> Result<(), std::io::Error> {
 
 pub fn extract_archive(file: &Path, dest: &Path, verbose: bool) -> Result<(), std::io::Error> {
     let mut tar = Archiver::parse(file);
-    tar.extract_to_dir(dest)?;
+    tar.extract_to_dir(dest, verbose)?;
     if verbose {
-        eprintln!("Extracted contents to {}", dest.display());
+        info!("Extracted contents to '{}'", dest.display());
     }
     Ok(())
 }
 
+#[allow(unused_variables)]
 pub fn create_archive(files: &[PathBuf]) -> Result<(), std::io::Error> {
     todo!()
 }

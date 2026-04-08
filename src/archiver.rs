@@ -6,6 +6,7 @@ use std::{
     time::SystemTime,
 };
 
+use log::{info, warn};
 use tabled::{
     Table,
     builder::Builder,
@@ -86,10 +87,13 @@ impl Archiver {
     }
 
     /// Extract the archive contents into the given directory
-    pub fn extract_to_dir(&mut self, dest: &Path) -> Result<(), std::io::Error> {
+    pub fn extract_to_dir(&mut self, dest: &Path, verbose: bool) -> Result<(), std::io::Error> {
         // ensure output dir exists
         if !dest.exists() {
             std::fs::create_dir_all(dest)?;
+            if verbose {
+                info!("Created output directory '{}'", dest.display());
+            }
         }
 
         // move to the new output dir
@@ -108,7 +112,9 @@ impl Archiver {
 
         for file in &self.files {
             self.extract_object(file)?;
-            eprintln!("Extracted {}", file.header.path().display());
+            if verbose {
+                info!("Extracted '{}'", file.header.path().display());
+            }
         }
 
         Ok(())
@@ -192,7 +198,7 @@ impl Archiver {
                 format!("{index}"),
                 file.display_name(),
                 file.type_flag.into(),
-                format!("{} B", file.file_size),
+                file.display_size(),
                 file.display_permissions(),
                 file.display_modified(),
             ]);
@@ -226,9 +232,11 @@ fn update_metadata(
     let f = File::open(path)?;
 
     if path.is_symlink() {
-        unix::fs::lchown(path, Some(uid), Some(gid))?;
+        _ = unix::fs::lchown(path, Some(uid), Some(gid))
+            .map_err(|err| warn!("Failed to update uid/gid: {}", err));
     } else {
-        unix::fs::chown(path, Some(uid), Some(gid))?;
+        _ = unix::fs::chown(path, Some(uid), Some(gid))
+            .map_err(|err| warn!("Failed to update uid/gid: {}", err));
     }
 
     f.set_permissions(mode)?;

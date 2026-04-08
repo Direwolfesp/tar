@@ -183,7 +183,21 @@ impl Header {
         path
     }
 
-    /// get file path formated as string
+    /// Formats file size in the appropiate filesize unit: B, KB, MB, GB
+    pub fn display_size(&self) -> String {
+        let size = self.file_size;
+        if size >= 1_000_000_000 {
+            format!("{:.1} GB", size as f64 / 1_000_000_000 as f64)
+        } else if size >= 1_000_000 {
+            format!("{:.1} MB", size as f64 / 1_000_000 as f64)
+        } else if size >= 1_000 {
+            format!("{:.1} KB", size as f64 / 1000 as f64)
+        } else {
+            format!("{} B", size)
+        }
+    }
+
+    /// Get file path formated as string
     pub fn display_name(&self) -> String {
         let path = self.path().as_path().display().to_string();
         match self.type_flag {
