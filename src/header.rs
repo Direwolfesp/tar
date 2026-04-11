@@ -5,8 +5,8 @@ use crate::{RECORD_SIZE, utils};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use thiserror::Error;
 
-/// Generic tar header structure that tries to comply with both legacy and modern
-/// POSIX format record.
+/// Generic Header compatible with Unix V7 Old header and POSIX 1988 extension.
+/// Not compatible with: POSIX 2001, GNU Tar
 #[derive(Debug)]
 pub struct Header {
     /// File path and name
@@ -41,9 +41,9 @@ pub struct Header {
     /// such hard links should be recreated in the file system.
     pub linked_file: Option<String>,
 
-    /// Only present for post 1988 POSIX IEEE standard archives. Which is almost the case
-    /// nowadays. Must check for the presence of "ustar\0" at offset 257
-    posix_header: Option<PosixHeader>,
+    /// Only present for post 1988 POSIX IEEE standard archives.
+    /// Must check for the presence of "ustar\0" at offset 257
+    posix_header: Option<Posix1988Header>,
 }
 
 #[derive(Debug, Error)]
@@ -120,7 +120,7 @@ impl Header {
         let linked_file: Option<String> = utils::get_string(&bytes[FieldRange::Linked]);
 
         // POSIX HEADER (optional, common case)
-        let posix_header = PosixHeader::from_record(bytes)?;
+        let posix_header = Posix1988Header::from_record(bytes)?;
 
         let header = Header {
             path,
@@ -187,11 +187,11 @@ impl Header {
     pub fn display_size(&self) -> String {
         let size = self.file_size;
         if size >= 1_000_000_000 {
-            format!("{:.1} GB", size as f64 / 1_000_000_000 as f64)
+            format!("{:.1} GB", size as f64 / 1_000_000_000_f64)
         } else if size >= 1_000_000 {
-            format!("{:.1} MB", size as f64 / 1_000_000 as f64)
+            format!("{:.1} MB", size as f64 / 1_000_000_f64)
         } else if size >= 1_000 {
-            format!("{:.1} KB", size as f64 / 1000 as f64)
+            format!("{:.1} KB", size as f64 / 1000_f64)
         } else {
             format!("{} B", size)
         }
@@ -268,7 +268,8 @@ impl Header {
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct PosixHeader {
+/// Mostly a POSIX 1988 Header
+struct Posix1988Header {
     /// Ustar version, "00"
     version: u16,
 
@@ -288,24 +289,20 @@ struct PosixHeader {
     filename_prefix: Option<String>,
 }
 
-impl PosixHeader {
+impl Posix1988Header {
     pub fn from_record(bytes: &[u8; RECORD_SIZE]) -> Result<Option<Self>, ParseError> {
-        // Here I wont distinguish between POSIX ustar and
-        // GNU Tar, and just accept any extented header.
-        // Im just making it work with regular GNU tar utility.
+        // must be present for a valid 1988 header
         let ustar_magic = &bytes[FieldRange::Ustar];
-
-        if ustar_magic != b"ustar " && ustar_magic != b"ustar\0" {
+        if ustar_magic != b"ustar\0" {
             return Ok(None);
         }
 
-        let version_str = &bytes[FieldRange::Version];
-        if version_str != b" \0" && version_str != b"00" {
+        let version = &bytes[FieldRange::Version];
+        if version != b"00" {
             return Err(ParseError::MissingField(String::from(
-                "ustar version missing",
+                "POSIX 1988 version missing",
             )));
         }
-        let version = 0;
 
         // OWNER
         let owner: Option<String> = utils::get_string(&bytes[FieldRange::Owner]);
@@ -322,8 +319,8 @@ impl PosixHeader {
         // FILENAME PREFIX
         let filename_prefix: Option<String> = utils::get_string(&bytes[FieldRange::FilenamePrefix]);
 
-        Ok(Some(PosixHeader {
-            version,
+        Ok(Some(Posix1988Header {
+            version: 0,
             owner,
             group,
             device_major,
@@ -403,8 +400,8 @@ impl From<TypeFlag> for String {
             TypeFlag::Directory => "dir".into(),
             TypeFlag::Fifo => "fifo".into(),
             TypeFlag::LongPathName => "???".into(),
-            TypeFlag::GlobalExtHeader => unimplemented!(),
-            TypeFlag::ExtHeader => unimplemented!(),
+            TypeFlag::GlobalExtHeader => unimplemented!("global extended header"),
+            TypeFlag::ExtHeader => unimplemented!("extended header"),
         }
     }
 }

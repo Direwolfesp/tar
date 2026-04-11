@@ -135,13 +135,17 @@ impl Archiver {
                 io::copy_file_range(src, obj.offset, obj.header.file_size, dest.as_path(), 0)?;
             }
             TypeFlag::HardLink => {
-                let link = obj.header.path();
-                if link.exists() {
-                    let original: &str = obj
-                        .header
-                        .linked_file
-                        .as_deref()
-                        .expect("must be present for hardlinks");
+                let original: &str = obj
+                    .header
+                    .linked_file
+                    .as_deref()
+                    .expect("must be present for hardlinks");
+
+                if fs::exists(original).expect(
+                    r#"the original file should have been extracted before,
+                    following Tar specs"#,
+                ) {
+                    let link = obj.header.path();
                     std::fs::hard_link(original, link)?;
                 }
             }
@@ -158,7 +162,12 @@ impl Archiver {
                 let dir = obj.header.path();
                 std::fs::create_dir_all(dir)?;
             }
-            _ => todo!("extract rest of file types"),
+            TypeFlag::CharDev => todo!("chardev"),
+            TypeFlag::BlockDev => todo!("blockdev"),
+            TypeFlag::Fifo => todo!("fifo"),
+            TypeFlag::GlobalExtHeader => todo!("global extended header"),
+            TypeFlag::ExtHeader => todo!("ext header"),
+            TypeFlag::LongPathName => unreachable!("long path name"),
         }
 
         // Update new file/dir/symlink metadata
